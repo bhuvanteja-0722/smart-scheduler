@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Class Schedule Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        form { margin-bottom: 20px; }
+        label { display: block; margin: 10px 0 5px; font-weight: bold; }
+        input, select, button { padding: 8px; margin: 5px 0; width: 100%; max-width: 300px; box-sizing: border-box; }
+        button { background: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background: #45a049; }
+        .remove-btn { background: #f44336; width: auto; }
+        #excelInput { margin: 10px 0; }
+        #preview { margin-top: 20px; padding: 10px; background: #e8f5e8; border-radius: 4px; }
+        #schedule { margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .lab { background-color: #ffeb3b; font-weight: bold; }
+        .error { color: red; }
+        .preview-item { margin: 5px 0; padding: 5px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Class Schedule Generator</h1>
+        <p>Enter teacher details manually or import from Excel to generate a weekly schedule.</p>
+
+        <form id="inputForm">
+            <label for="className">Class Name (e.g., CS101):</label>
+            <input type="text" id="className" required>
+
+            <h3>Input Mode</h3>
+            <button type="button" id="importExcelBtn">Import from Excel</button>
+            <input type="file" id="excelFile" accept=".xlsx,.xls" style="display: none;">
+            <br><br>
+
+            <h3>Manual Entry (Optional - Use After Import)</h3>
+            <div id="subjectsContainer">
+                <!-- Dynamic fields will be added here -->
+            </div>
+            <button type="button" id="addSubject">Add Manual Subject/Teacher</button>
+            <br><br>
+            <button type="submit">Generate Schedule</button>
+        </form>
+
+        <div id="preview"></div>
+        <div id="schedule"></div>
+    </div>
+
+    <script>
+        let importedSubjects = []; // Store imported data
+
+        // Excel Import
+        document.getElementById('importExcelBtn').addEventListener('click', () => {
+            document.getElementById('excelFile').click();
+        });
+
+        document.getElementById('excelFile').addEventListener('change', handleExcelImport);
+
+        function handleExcelImport(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+
+                    if (jsonData.length < 1) throw new Error('Empty sheet');
+
+                    // Find header row (assume first row)
+                    const headers = jsonData[0].map(h => h.toString().toLowerCase().trim());
+                    const requiredCols = ['teacher', 'subject', 'credits', 'haslab'];
+                    const colMap = {};
+                    requiredCols.forEach(col => {
+                        const idx = headers.findIndex(h => h.includes(col));
+                        if (idx === -1) throw new Error(`Missing column: ${col}`);
+                        colMap[col] = idx;
+                    });
+
+                    importedSubjects = [];
+                    for (let i = 1; i < jsonData.length; i++) {
+                        const row = jsonData[i];
+                        if (row.length < headers.length) continue; // Skip incomplete rows
+
+                        const teacher = row[colMap['teacher']]?.toString().trim();
+                        const subject = row[colMap['subject']]?.toString().trim();
+                        const credits = parseInt(row[colMap['credits']]);
+                        const hasLabStr = row[colMap['haslab']]?.toString().trim().toLowerCase();
+                        const hasLab = hasLabStr === 'yes' || hasLabStr === 'y';
+
+                        if (teacher && subject && !isNaN(credits) && credits >= 1 && credits <= 4) {
+                            importedSubjects.push({ teacher, subject, credits, hasLab });
+                        }
+                    }
+
+                    if (importedSubjects.length === 0) throw new Error('No valid data found in Excel');
+
+                    // Clear manual form
+                    document.getElementById('subjectsContainer').innerHTML = '';
+                    displayPreview(importedSubjects, 'Imported from Excel:');
+                    e.target.value = ''; // Reset file input
+
+                } catch (error) {
+                    document.getElementById('preview').innerHTML = `<p class="error">Error importing Excel: ${error.message}. Please check format.</p>`;
+                    importedSubjects = [];
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // Manual Form Functions
+        document.getElementById('addSubject').addEventListener('click', addSubjectEntry);
+        function addSubjectEntry() {
+            const container = document.getElementById('subjectsContainer');
+            const newEntry = document.createElement('div');
+            newEntry.className = 'subject-entry';
+            newEntry.innerHTML = `
+                <label>Teacher Name:</label>
+                <input type="text" class="teacher" required>
+                <label>Subject:</label>
+                <input type="text" class="subject" required>
+                <label>Credits (1-4):</label>
+                <input type="number" class="credits" min="1" max="4" required>
+                <label>Has Lab? (Yes/No):</label>
+                <select class="hasLab">
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                </select>
+                <button type="button" class="remove-btn">Remove</button>
+                <hr>
+            `;
+            newEntry.querySelector('.remove-btn').addEventListener('click', () => newEntry.remove());
+            container.appendChild(newEntry);
+            displayPreview(getManualSubjects(), 'Manual Entries:');
+        }
+
+        // Form Submission
+        document.getElementById('inputForm').addEventListener('submit', generateSchedule);
+
+        function generateSchedule(e) {
+            e.preventDefault();
+            const className = document.getElementById('className').value.trim();
+            if (!className) {
+                document.getElementById('schedule').innerHTML = '<p class="error">Please enter class name.</p>';
+                return;
+            }
+
+            const manualSubjects = getManualSubjects();
+            const allSubjects = [...importedSubjects, ...manualSubjects];
+
+            if (allSubjects.length === 0) {
+                document.getElementById('schedule').innerHTML = '<p class="error">No subjects added. Import from Excel or add manually.</p>';
+                return;
+            }
+
+            // Generate schedule
+            const schedule = createSchedule(allSubjects, className);
+            displaySchedule(schedule);
+        }
+
+        function getManualSubjects() {
+            const entries = document.querySelectorAll('.subject-entry');
+            const subjects = [];
+            entries.forEach(entry => {
+                const teacher = entry.querySelector('.teacher').value.trim();
+                const subject = entry.querySelector('.subject').value.trim();
+                const credits = parseInt(entry.querySelector('.credits').value);
+                const hasLab = entry.querySelector('.hasLab').value === 'yes';
+                if (teacher && subject && !isNaN(credits)) {
+                    subjects.push({ teacher, subject, credits, hasLab });
+                }
+            });
+            return subjects;
+        }
+
+        function displayPreview(subjects, title) {
+            let html = `<h3>${title}</h3><div>`;
+            subjects.forEach(({ teacher, subject, credits, hasLab }) => {
+                html += `<div class="preview-item">Teacher: ${teacher} | Subject: ${subject} | Credits: ${credits} | Lab: ${hasLab ? 'Yes' : 'No'}</div>`;
+            });
+            html += '</div>';
+            document.getElementById('preview').innerHTML = html;
+        }
+
+        // Schedule Generation Logic (unchanged from original)
+        function createSchedule(subjects, className) {
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+            const slotsPerDay = 6;
+            const schedule = Array.from({ length: 5 }, () => Array(slotsPerDay).fill(null));
+            const teacherSchedules = {};
+
+            subjects.forEach(({ teacher, subject, credits, hasLab }) => {
+                if (!teacherSchedules[teacher]) {
+                    teacherSchedules[teacher] = Array.from({ length: 5 * slotsPerDay }, () => false);
+                }
+
+                const sessionsPerWeek = Math.min(credits, 4);
+                const availableSlots = [];
+
+                for (let day = 0; day < 5; day++) {
+                    for (let slot = 0; slot < slotsPerDay; slot++) {
+                        const globalSlot = day * slotsPerDay + slot;
+                        if (!teacherSchedules[teacher][globalSlot] && !schedule[day][slot]) {
+                            availableSlots.push({ day, slot });
+                        }
+                    }
+                }
+
+                // Schedule lectures
+                for (let i = 0; i < sessionsPerWeek; i++) {
+                    if (availableSlots.length === 0) break;
+                    const idx = Math.floor(Math.random() * availableSlots.length);
+                    const { day, slot } = availableSlots.splice(idx, 1)[0];
+                    schedule[day][slot] = { teacher, subject, type: 'Lecture' };
+                    const globalSlot = day * slotsPerDay + slot;
+                    teacherSchedules[teacher][globalSlot] = true;
+                }
+
+                // Schedule lab
+                if (hasLab && availableSlots.length >= 2) {
+                    const idx = Math.floor(Math.random() * availableSlots.length);
+                    let { day, slot } = availableSlots[idx];
+                    if (slot + 1 < slotsPerDay && !schedule[day][slot + 1]) {
+                        schedule[day][slot] = { teacher, subject, type: 'Lab (Part 1)' };
+                        schedule[day][slot + 1] = { teacher, subject, type: 'Lab (Part 2)' };
+                        const globalSlot1 = day * slotsPerDay + slot;
+                        const globalSlot2 = day * slotsPerDay + slot + 1;
+                        teacherSchedules[teacher][globalSlot1] = true;
+                        teacherSchedules[teacher][globalSlot2] = true;
+                        availableSlots.splice(idx, 1);
+                        const nextIdx = availableSlots.findIndex(s => s.day === day && s.slot === slot + 1);
+                        if (nextIdx > -1) availableSlots.splice(nextIdx, 1);
+                    }
+                }
+            });
+
+            return { className, days, slotsPerDay, schedule };
+        }
+
+        // Display Schedule (unchanged)
+        function displaySchedule({ className, days, slotsPerDay, schedule }) {
+            let html = `<h2>Weekly Schedule for ${className}</h2>
+                        <table>
+                            <tr><th>Time Slot</th>`;
+            days.forEach(day => html += `<th>${day}</th>`);
+            html += '</tr>';
+
+            const timeSlots = ['9:00-10:00', '10:00-11:00', '11:00-12:00', '12:00-1:00', '1:00-2:00', '2:00-3:00'];
+
+            for (let slot = 0; slot < slotsPerDay; slot++) {
+                html += `<tr><td>${timeSlots[slot]}</td>`;
+                days.forEach((_, day) => {
+                    const entry = schedule[day][slot];
+                    if (entry) {
+                        const className = entry.type.includes('Lab') ? 'lab' : '';
+                        html += `<td class="${className}">${entry.subject}<br>(${entry.teacher}, ${entry.type})</td>`;
+                    } else {
+                        html += '<td>-</td>';
+                    }
+                });
+                html += '</tr>';
+            }
+
+            html += '</table>';
+            document.getElementById('schedule').innerHTML = html;
+        }
+    </script>
+</body>
+</html>
